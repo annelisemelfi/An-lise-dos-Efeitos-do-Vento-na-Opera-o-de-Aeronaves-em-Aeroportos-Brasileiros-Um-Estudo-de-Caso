@@ -1,0 +1,141 @@
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(REdaS)
+library(openair)
+library(ggplot2)
+
+aeroportos <- c("SBGR", "SBKP" ,"SBBR", "SBSP" ,"SBRJ" ,"SBCF", "SBRF" ,"SBGL" ,"SBSV" ,"SBPA", "SBCT" ,"SBFZ" ,"SBEG" ,"SBBE", "SBFL", "SBCY", "SBVT","SBGO")
+
+
+
+
+# Carregar a biblioteca necessária
+library(readr)
+
+# Definir o URL do arquivo CSV
+## Note que aqui o url vai baixar os dados de SBRJ, pense em uma forma de acessar todos os aeroportos apenas modificando este trecho do URL. O mesmo é necessário para o intervalo de tempo da análise
+url <- "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py?station=SBBR&data=drct&data=sknt&year1=2013&month1=1&day1=1&year2=2023&month2=12&day2=31&tz=Etc%2FUTC&format=onlycomma&latlon=no&elev=no&missing=M&trace=T&direct=no&report_type=3&report_type=4"
+
+# Ler o arquivo CSV diretamente do URL
+dados <- read.csv(url)
+
+# Visualizar as primeiras linhas dos dados
+head(dados)
+
+
+# Calcular a velocidade do vento em knots e converter para numérico
+dados <- dados %>%
+  mutate(
+    drct = as.numeric(drct),
+    sknt = as.numeric(sknt),
+    direcao = drct,
+    velocidade_knots = sknt
+  )
+
+summary(dados)
+
+# Remover linhas com valores NA na coluna de direção
+dados <- na.omit(dados)
+
+# Resumo após remoção dos NAs
+summary(dados)
+
+# Distribuir a quantidade de ventos para cada intervalo de velocidade e contar para cada direção
+por_intervalo <- dados %>%
+  mutate(
+    faixa_velocidade = case_when(
+      velocidade_knots < 10 ~ "<10 knots",
+      velocidade_knots >= 10 & velocidade_knots <= 13 ~ "10-13 knots",
+      velocidade_knots > 13 & velocidade_knots <= 20 ~ "13-20 knots",
+      TRUE ~ ">20 knots"
+    )
+  ) %>%
+  group_by(direcao, faixa_velocidade) %>%
+  summarise(
+    quantidade = n()
+  ) %>%
+  ungroup() %>%
+  spread(faixa_velocidade, quantidade, fill = 0) %>%
+  mutate(
+    total = `<10 knots` + `10-13 knots` + `13-20 knots` + `>20 knots`
+  ) %>%
+  select(direcao, `<10 knots`, `10-13 knots`, `13-20 knots`, `>20 knots`, total) %>%
+  arrange(direcao)
+
+# Verificar se o somatório é o número total de observações
+total_observacoes <- nrow(dados)
+somatorio <- sum(por_intervalo$total)
+cat("Total de observações:", total_observacoes, "\n")
+cat("Somatório:", somatorio, "\n")
+
+# Exibir a tabela com a distribuição de ventos para cada intervalo
+print(por_intervalo)
+
+
+# Calcular a porcentagem de ventos em cada intervalo de velocidade considerando o total de todas as direções
+por_porcentagem <- por_intervalo %>%
+  mutate(
+    `<10 knots` = (`<10 knots` / sum(`<10 knots`)) * 100,
+    `10-13 knots` = (`10-13 knots` / sum(`10-13 knots`)) * 100,
+    `13-20 knots` = (`13-20 knots` / sum(`13-20 knots`)) * 100,
+    `>20 knots` = (`>20 knots` / sum(`>20 knots`)) * 100
+  )
+
+# Exibir a tabela com as porcentagens de ventos para cada intervalo de velocidade
+print(por_porcentagem)
+
+
+
+# Cobertura de ventos 
+
+# Carregar a biblioteca necessária
+library(dplyr)
+
+
+# Definir a direção para testar a cobertura
+direcao <- seq(0, 360, 10)
+
+# Vetor de componente do vento para testar
+componente <- c(10, 13,20)
+
+# Data frame com direção | componente | cobertura
+df <- data.frame(
+  direcao = rep(direcao, each = length(componente)),
+  componente = rep(componente, length(direcao))
+) %>%
+  mutate(
+    cobertura = {
+      cobertura <- c()
+      for (i in seq(length(direcao))) {
+        cross_speed = dados$velocidade_knots * abs(sin(deg2rad(direcao[i] - dados$direcao)))
+        pass <- cross_speed <= componente[i]
+        cobertura <- c(cobertura, mean(pass, na.rm = TRUE))
+      }
+      cobertura
+    }
+  )
+
+library(tidyr)
+
+df_transformado <- spread(df, key = componente, value = cobertura)
+
+print(df_transformado)
+
+
+library(ggplot2)
+# Transformar o dataframe de largo para longo
+df_transformado_long <- tidyr::pivot_longer(df_transformado, cols = c(`10`, `13`, `20`), names_to = "Velocidade", values_to = "Cobertura")
+
+# Criar o gráfico usando ggplot
+ggplot(df_transformado_long, aes(x = factor(direcao), y = Cobertura, color = Velocidade, group = Velocidade)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Direção", y = "Cobertura", color = "Velocidade (kt)") +
+  scale_x_discrete(labels = function(x) paste0(x, "°")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_hline(yintercept = 0.95, linetype = "dashed", color = "black")
+
+
+
